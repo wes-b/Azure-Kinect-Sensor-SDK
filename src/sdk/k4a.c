@@ -17,6 +17,7 @@
 #include <k4ainternal/capturesync.h>
 #include <k4ainternal/transformation.h>
 #include <azure_c_shared_utility/tickcounter.h>
+#include <azure_c_shared_utility/threadapi.h>
 
 // System dependencies
 #include <stdlib.h>
@@ -81,6 +82,8 @@ void color_capture_ready(k4a_result_t result, k4a_capture_t capture_handle, void
     capturesync_add_capture(device->capturesync, result, capture_handle, COLOR_CAPTURE);
 }
 
+void usb_cmd_experiment(void);
+
 k4a_result_t k4a_device_open(uint32_t index, k4a_device_t *device_handle)
 {
     RETURN_VALUE_IF_ARG(K4A_RESULT_FAILED, device_handle == NULL);
@@ -98,6 +101,13 @@ k4a_result_t k4a_device_open(uint32_t index, k4a_device_t *device_handle)
     logger_config_t logger_config;
     logger_config_init_default(&logger_config);
     result = TRACE_CALL(logger_create(&logger_config, &logger_handle));
+
+    usb_cmd_experiment();
+    //ThreadAPI_Sleep(15000);
+    // if (index == 0)
+    // {
+    //     return K4A_RESULT_FAILED;
+    // }
 
     if (K4A_SUCCEEDED(result))
     {

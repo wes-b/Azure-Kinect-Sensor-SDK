@@ -12,28 +12,26 @@
 #include <stdbool.h>
 #include <assert.h>
 #include <stdio.h>
+#include <azure_c_shared_utility/threadapi.h>
 
 // Ensure we have LIBUSB_API_VERSION defined if not defined by libusb.h
 #ifndef LIBUSB_API_VERSION
 #define LIBUSB_API_VERSION 0
 #endif
 
-FORCEINLINE k4a_result_t
-TraceLibUsbError(int err, const char *szCall, const char *szFile, int line, const char *szFunction)
-{
-    k4a_result_t result = K4A_RESULT_SUCCEEDED;
-    if (err < 0)
-    {
-        // Example print:
-        //  depth.cpp (86): allocator_create(&depth->allocator) returned ERROR_NOT_FOUND in depth_create
-
-        LOG_ERROR(
-            LOGGER_K4A, "%s (%d): %s returned %s in %s ", szFile, line, szCall, libusb_error_name(err), szFunction);
-        result = K4A_RESULT_FAILED;
-    }
-
-    return result;
-}
+#define TraceLibUsbError(/*int*/ err,                                                                                  \
+                         /*const char * */ szCall,                                                                     \
+                         /*const char **/ szFile,                                                                      \
+                         /*int*/ line,                                                                                 \
+                         /*const char * */ szFunction)                                                                 \
+    (err < 0) ? K4A_RESULT_FAILED : K4A_RESULT_SUCCEEDED;                                                              \
+    if (err < 0)                                                                                                       \
+    {                                                                                                                  \
+        logger_error(                                                                                                  \
+            LOGGER_K4A, "%s (%d): %s returned %s in %s ", szFile, line, szCall, libusb_error_name(err), szFunction);   \
+    }                                                                                                                  \
+                                                                                                                       \
+    /*return result;*/
 
 #define K4A_RESULT_FROM_LIBUSB(_call_) TraceLibUsbError((_call_), #_call_, __FILE__, __LINE__, __func__)
 
@@ -313,6 +311,91 @@ static k4a_result_t find_libusb_device(uint32_t device_index,
     return result;
 }
 
+int hotplug_callback_fn(libusb_context *ctx, libusb_device *device, libusb_hotplug_event event, void *user_data)
+{
+    usbcmd_context_t *usbcmd = (usbcmd_context_t *)user_data;
+    k4a_result_t result;
+    struct libusb_device_descriptor desc;
+
+    (void)ctx;
+    (void)device;
+    (void)event;
+    (void)user_data;
+    (void)usbcmd;
+    (void)result;
+
+    result = K4A_RESULT_FROM_LIBUSB(libusb_get_device_descriptor(device, &desc));
+
+    LOG_ERROR("%s: VID:%04X PID:%04X",
+              event == LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED ? "ARRIVED" : "REMOVED",
+              desc.idVendor,
+              desc.idProduct);
+    return 0;
+}
+
+libusb_context *g_libusb_context;
+libusb_hotplug_callback_handle g_hotplug_handle;
+
+static int usb_cmd_experiment_thread(void *param)
+{
+    struct timeval tv = { 0 };
+    (void)param;
+    // k4a_result_t result;
+
+    tv.tv_sec = 15;
+
+    logger_error("wes", "Thread polling", 0);
+
+    int libusb = libusb_handle_events_timeout_completed(g_libusb_context, &tv, NULL);
+    while (libusb_handle_events_timeout_completed(g_libusb_context, &tv, NULL) == 0)
+    {
+        logger_error("wes", "Thread polling done %d", libusb);
+    }
+    logger_error("wes", "Thread polling done done %d", libusb);
+    // while (0 == libusb_handle_events_timeout_completed(g_libusb_context, &tv, NULL))
+    // {
+    //};
+    // result = K4A_RESULT_FROM_LIBUSB(libusb_handle_events_timeout_completed(g_libusb_context, &tv, NULL));
+    //(void)result;
+    return 0;
+}
+
+void usb_cmd_experiment(void)
+{
+    libusb_hotplug_event events = LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED | LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT;
+    libusb_hotplug_flag flags = LIBUSB_HOTPLUG_NO_FLAGS;
+    k4a_result_t result;
+    (void)result;
+    result = K4A_RESULT_FROM_LIBUSB(libusb_init(&g_libusb_context));
+
+#if (LIBUSB_API_VERSION >= 0x01000106)
+    result = K4A_RESULT_FROM_LIBUSB(
+        libusb_set_option(g_libusb_context, LIBUSB_OPTION_LOG_LEVEL, LIBUSB_LOG_LEVEL_WARNING));
+#else
+    libusb_set_debug(g_libusb_context, 3);           // set verbosity level to 3, as suggested in the documentation
+#endif
+
+    logger_error("wes",
+                 " %08X libusb_has_capability = %d",
+                 LIBUSB_API_VERSION,
+                 libusb_has_capability(LIBUSB_CAP_HAS_HOTPLUG));
+
+    result = K4A_RESULT_FROM_LIBUSB(libusb_hotplug_register_callback(g_libusb_context,
+                                                                     events,
+                                                                     flags,
+                                                                     K4A_MSFT_VID,
+                                                                     K4A_DEPTH_PID,
+                                                                     LIBUSB_HOTPLUG_MATCH_ANY,
+                                                                     hotplug_callback_fn,
+                                                                     NULL,
+                                                                     &g_hotplug_handle));
+
+    THREAD_HANDLE thread;
+    THREADAPI_RESULT tresult = ThreadAPI_Create(&thread, usb_cmd_experiment_thread, NULL);
+    result = K4A_RESULT_FROM_BOOL(tresult == THREADAPI_OK);
+    logger_error("wes", "Thread Created", 0);
+}
+
 k4a_result_t usb_cmd_create(usb_command_device_type_t device_type,
                             uint32_t device_index,
                             const guid_t *container_id,
@@ -427,7 +510,8 @@ void usb_cmd_destroy(usbcmd_t usbcmd_handle)
     if (usbcmd->libusb)
     {
         // Release interface(s)
-        (void)K4A_RESULT_FROM_LIBUSB(libusb_release_interface(usbcmd->libusb, usbcmd->interface));
+        k4a_result_t result = K4A_RESULT_FROM_LIBUSB(libusb_release_interface(usbcmd->libusb, usbcmd->interface));
+        (void)result;
     }
 
     if (usbcmd->libusb)
