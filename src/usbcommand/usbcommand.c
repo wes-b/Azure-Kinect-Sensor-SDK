@@ -19,19 +19,18 @@
 #define LIBUSB_API_VERSION 0
 #endif
 
-#define TraceLibUsbError(/*int*/ err,                                                                                  \
-                         /*const char * */ szCall,                                                                     \
-                         /*const char **/ szFile,                                                                      \
-                         /*int*/ line,                                                                                 \
-                         /*const char * */ szFunction)                                                                 \
-    (err < 0) ? K4A_RESULT_FAILED : K4A_RESULT_SUCCEEDED;                                                              \
-    if (err < 0)                                                                                                       \
-    {                                                                                                                  \
-        logger_error(                                                                                                  \
-            LOGGER_K4A, "%s (%d): %s returned %s in %s ", szFile, line, szCall, libusb_error_name(err), szFunction);   \
-    }                                                                                                                  \
-                                                                                                                       \
-    /*return result;*/
+FORCEINLINE k4a_result_t
+TraceLibUsbError(int err, const char *szCall, const char *szFile, int line, const char *szFunction)
+{
+    k4a_result_t result = K4A_RESULT_SUCCEEDED;
+    if (err < 0)
+    {
+        LOG_ERROR("%s (%d): %s returned %s in %s ", szFile, line, szCall, libusb_error_name(err), szFunction);
+        result = K4A_RESULT_FAILED;
+    }
+
+    return result;
+}
 
 #define K4A_RESULT_FROM_LIBUSB(_call_) TraceLibUsbError((_call_), #_call_, __FILE__, __LINE__, __func__)
 
