@@ -3,6 +3,8 @@
 
 add_executable(capture_perf captureperf.cpp)
 
+target_compile_definitions(capture_perf PRIVATE _CRT_SECURE_NO_WARNINGS)
+
 target_link_libraries(capture_perf PRIVATE
     azure::aziotsharedutil
     gtest::gtest
